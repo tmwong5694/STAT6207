@@ -1,164 +1,284 @@
 #!/usr/bin/env python3
 """
-Cats vs Dogs Classification with KNN
+Cats vs Dogs Classification with KNN features
 
-1. Loads 100 cat and 100 dog images from "./data/cats" and "./data/dogs"
-2. Extracts simple image features (color statistics + basic texture)
-3. Splits into train (80%) and test (20%) sets, plus 10 unseen images for final evaluation
-4. Trains a K-Nearest Neighbors classifier
-5. Evaluates on the 10 unseen images, prints accuracy, and visualizes failed cases
+- Loads up to N images from Cat100 and Dog100
+- Extracts simple numeric features per image
+- Splits into train/test and trains a KNN classifier
+- Evaluates on test split and on the 10 images in ./data/unseen
 
-Usage:
-    python cats_dogs_knn.py
+Run:
+  python advanced_task.py
 """
 
+import argparse
 import random
 from pathlib import Path
+from typing import List, Tuple
 
 import numpy as np
 from PIL import Image
-import matplotlib.pyplot as plt
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
 
-# ---- Feature extraction ----
+# ----------------- Helpers -----------------
 
-def extract_features(img_array):
-    """Extract color and texture features from an RGB image array."""
-    r, g, b = img_array[:, :, 0], img_array[:, :, 1], img_array[:, :, 2]
-    feats = []
-    for ch in (r, g, b):
-        feats.extend([
-            np.mean(ch), np.std(ch),
-            np.min(ch), np.max(ch),
-            np.median(ch)
-        ])
-    # grayscale texture
-    gray = 0.299*r + 0.587*g + 0.114*b
-    grad_x = np.abs(np.gradient(gray, axis=1)).mean()
-    grad_y = np.abs(np.gradient(gray, axis=0)).mean()
-    feats.extend([gray.mean(), gray.std(), grad_x, grad_y])
-    return np.array(feats, dtype=np.float32)
+EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp")
 
-def load_dataset(cat_dir, dog_dir, n_per_class=100, img_size=(224, 224)):
-    """Load and extract features for cats and dogs.
+
+def list_images(dir_path: Path) -> List[Path]:
+    if not dir_path.exists() or not dir_path.is_dir():
+        return []
+    return [p for p in sorted(dir_path.iterdir()) if p.suffix.lower() in EXTS]
+
+
+def load_dataset(cat_dir: Path, dog_dir: Path, n_per_class: int, img_size=(224, 224)) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+    """Load the cat and dog dataset, extract features, and return as numpy arrays.
+
+    Parameters
+    ----------
+    cat_dir : Path
+        Path to the directory containing cat images.
+    dog_dir : Path
+        Path to the directory containing dog images.
+    n_per_class : int
+        Number of images to load per class (cat/dog).
+    img_size : tuple of int
+        Target size for resizing images.
 
     Returns
     -------
-    X : np.ndarray of shape (n_samples, n_features)
-    y : np.ndarray of shape (n_samples,)
-    paths : list[str]
+    Tuple[np.ndarray, np.ndarray, List[str]]
+        Tuple containing:
+        - Features array X of shape (n_samples, n_features)
+        - Labels array y of shape (n_samples,)
+        - List of image file paths.
     """
     X, y, paths = [], [], []
-    for label, d in enumerate((cat_dir, dog_dir)):  # 0=cats, 1=dogs
-        directory = Path(d)
-        if not directory.exists() or not directory.is_dir():
-            raise FileNotFoundError(f"Directory not found: {directory.resolve()}")
-        exts = ["*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tiff", "*.webp"]
-        files = []
-        for ext in exts:
-            files.extend(directory.glob(ext))
-        files = sorted(files)[:n_per_class]
-
+    for label, d in enumerate((cat_dir, dog_dir)):
+        files = list_images(d)[: n_per_class]
         if not files:
-            print(f"Warning: no images found in {directory} matching {exts}")
-
-        before = len(X)
+            print(f"Warning: no images found in {d}")
         for f in files:
             try:
                 img = Image.open(f).convert("RGB").resize(img_size)
-                arr = np.array(img, dtype=np.float32) / 255.0
+                arr = np.asarray(img, dtype=np.float32) / 255.0
                 X.append(extract_features(arr))
                 y.append(label)
                 paths.append(str(f))
-            except Exception:
-                # skip unreadable/corrupt files
+            except Exception as e:
+                print(f"Warning: failed to load {f}: {e}")
                 continue
-        loaded = len(X) - before
-        if loaded == 0:
-            print(f"Warning: no valid images loaded from {directory}")
-
     if len(X) == 0:
-        raise ValueError(
-            "No images were loaded for either class. Check CAT_DIR/DOG_DIR paths and image files."
-        )
-
-    return np.vstack(X), np.array(y), paths
+        raise ValueError("No images loaded from Cat/Dog folders. Check paths and files.")
+    return np.vstack(X), np.asarray(y, dtype=np.int64), paths
 
 
-# ---- Main script ----
+def extract_features(img_array: np.ndarray) -> np.ndarray:
+    """Compute simple color+texture features from an HxWx3 RGB array in [0,1].
+
+    Parameters
+    ----------
+    img_array : np.ndarray
+        Input image as a 3D array (height, width, channels).
+
+    Returns
+    -------
+    np.ndarray
+        Feature vector of shape (n_features,) for the input image.
+    """
+    # Split into R, G, B channels
+    r, g, b = img_array[:, :, 0], img_array[:, :, 1], img_array[:, :, 2]
+    feats: List[float] = []
+    # Compute per-channel statistics
+    for ch in (r, g, b):
+        feats.extend([
+            float(np.mean(ch)), float(np.std(ch)),
+            float(np.min(ch)), float(np.max(ch)),
+            float(np.median(ch)),
+        ])
+    # Compute gradients and additional features
+    gray = 0.299 * r + 0.587 * g + 0.114 * b
+    grad_x = float(np.abs(np.gradient(gray, axis=1)).mean())
+    grad_y = float(np.abs(np.gradient(gray, axis=0)).mean())
+    feats.extend([float(gray.mean()), float(gray.std()), grad_x, grad_y])
+    return np.array(feats, dtype=np.float32)
+
+
+def infer_label_from_path(path: str) -> int:
+    path = Path(path)
+    name = path.name.lower()
+    parent = path.parent.name.lower()
+    if "cat" in name or "cat" in parent:
+        return 0
+    if "dog" in name or "dog" in parent:
+        return 1
+    return -1
+
+
+def load_unseen(unseen_dir: Path, k: int = 10, img_size=(224, 224)) -> Tuple[np.ndarray, List[int], List[str]]:
+    """Load unseen images from ./data/unseen.
+
+    Supports two layouts:
+      1) Two subfolders: Cat_unseen/ and Dog_unseen/ (preferred)
+      2) Flat folder with mixed images
+
+    Returns features, labels (0=cat,1=dog,-1 unknown), and paths.
+    """
+    cat_sub = unseen_dir / "Cat_unseen"
+    dog_sub = unseen_dir / "Dog_unseen"
+
+    X, y, paths = [], [], []
+
+    if cat_sub.exists() and dog_sub.exists():
+        k_per_class = max(1, k // 2)
+        cat_files = list_images(cat_sub)[:k_per_class]
+        dog_files = list_images(dog_sub)[:k_per_class]
+        files_with_labels: List[Tuple[Path, int]] = [(p, 0) for p in cat_files] + [(p, 1) for p in dog_files]
+        if not files_with_labels:
+            raise ValueError(f"No images found under {cat_sub} and {dog_sub}")
+        # Keep deterministic order: cats then dogs as selected
+        for f, lbl in files_with_labels:
+            try:
+                img = Image.open(f).convert("RGB").resize(img_size)
+                arr = np.asarray(img, dtype=np.float32) / 255.0
+                X.append(extract_features(arr))
+                y.append(lbl)
+                paths.append(str(f))
+            except Exception as e:
+                print(f"Warning: failed to load unseen {f}: {e}")
+                continue
+        if len(X) == 0:
+            raise ValueError("Failed to load any unseen images from subfolders.")
+        return np.vstack(X), y, paths
+
+    # Fallback: flat folder
+    files = list_images(unseen_dir)[:k]
+    if len(files) == 0:
+        raise ValueError(f"No images found in unseen dir: {unseen_dir}")
+    for f in files:
+        try:
+            img = Image.open(f).convert("RGB").resize(img_size)
+            arr = np.asarray(img, dtype=np.float32) / 255.0
+            X.append(extract_features(arr))
+            y.append(infer_label_from_path(f))
+            paths.append(str(f))
+        except Exception as e:
+            print(f"Warning: failed to load unseen {f}: {e}")
+            continue
+    if len(X) == 0:
+        raise ValueError("Failed to load any unseen images.")
+    return np.vstack(X), y, paths
+
 
 def main():
+    parser = argparse.ArgumentParser()
+    repo_root = Path(__file__).resolve().parent
+    data_root = repo_root / "data" / "dog-and-cat-classification-dataset" / "versions" / "1" / "PetImages"
+    default_cat = data_root / "Cat100"
+    default_dog = data_root / "Dog100"
+    parser.add_argument("--cat-dir", type=str, default=str(default_cat))
+    parser.add_argument("--dog-dir", type=str, default=str(default_dog))
+    parser.add_argument("--unseen-dir", type=str, default=str(repo_root / "data" / "unseen"))
+    parser.add_argument("--limit-per-class", type=int, default=100)
+    parser.add_argument("--img-size", type=int, default=224)
+    parser.add_argument("--neighbors", type=int, default=5)
+    args = parser.parse_args()
+
     random.seed(42)
     np.random.seed(42)
 
-    # Resolve dataset paths relative to the repository root (this file's directory)
-    REPO_ROOT = Path(__file__).resolve().parent
-    DATA_ROOT = REPO_ROOT / "data" / "dog-and-cat-classification-dataset" / "versions" / "1" / "PetImages"
-    CAT_DIR = str(DATA_ROOT / "Cat")
-    DOG_DIR = str(DATA_ROOT / "Dog")
-    N = 100
-    
-    # Training image sizes of Resnet
-    IMG_SIZE = (224, 224)
-    TEST_UNSEEN = 10
-    K = 5
+    cat_dir = Path(args.cat_dir)
+    dog_dir = Path(args.dog_dir)
+    unseen_dir = Path(args.unseen_dir)
 
-    # Load features
-    X, y, paths = load_dataset(CAT_DIR, DOG_DIR, N, IMG_SIZE)
+    print(f"Loading dataset from:\n- {cat_dir}\n- {dog_dir}")
+    X, y, paths = load_dataset(cat_dir, dog_dir, n_per_class=args.limit_per_class, img_size=(args.img_size, args.img_size))
+    print(f"Loaded {len(y)} images. Feature dim = {X.shape[1]}")
 
-    # Split into train+test and reserve unseen
-    idx = list(range(len(y)))
-    random.shuffle(idx)
-    unseen_idx = idx[:TEST_UNSEEN]
-    rest_idx = idx[TEST_UNSEEN:]
-    X_unseen, y_unseen, paths_unseen = X[unseen_idx], y[unseen_idx], [paths[i] for i in unseen_idx]
-    X_rest, y_rest = X[rest_idx], y[rest_idx]
-
-    # Further split rest into train/test
+    # Split into train/test (stratified)
     X_train, X_test, y_train, y_test = train_test_split(
-        X_rest, y_rest, test_size=0.2, random_state=42, stratify=y_rest
+        X, y, test_size=0.2, random_state=42, stratify=y
     )
 
-    # Standardize features
+    # Scale features
     scaler = StandardScaler().fit(X_train)
     X_train_s = scaler.transform(X_train)
     X_test_s = scaler.transform(X_test)
-    X_unseen_s = scaler.transform(X_unseen)
 
     # Train KNN
-    knn = KNeighborsClassifier(n_neighbors=K)
+    knn = KNeighborsClassifier(n_neighbors=args.neighbors, algorithm="kd_tree", n_jobs=1)
     knn.fit(X_train_s, y_train)
 
     # Evaluate on test set
     y_pred = knn.predict(X_test_s)
-    acc = accuracy_score(y_test, y_pred)
-    print(f"Test set accuracy: {acc*100:.2f}%")
-    print(classification_report(y_test, y_pred, target_names=["cat","dog"]))
+    test_acc = accuracy_score(y_test, y_pred)
+    print(f"Test set accuracy: {test_acc*100:.2f}%")
+    print(classification_report(y_test, y_pred, target_names=["cat", "dog"]))
 
-    # Evaluate on unseen images
-    y_unseen_pred = knn.predict(X_unseen_s)
-    unseen_acc = accuracy_score(y_unseen, y_unseen_pred)
-    print(f"\nUnseen images accuracy: {unseen_acc*100:.2f}%")
+    # Unseen
+    try:
+        Xu, yu, pu = load_unseen(unseen_dir, k=10, img_size=(args.img_size, args.img_size))
+    except Exception as e:
+        print(f"Unseen load warning: {e}")
+        return
 
-    # Visualize failures on unseen
-    failures = [(p, true, pred) for p, true, pred in zip(paths_unseen, y_unseen, y_unseen_pred) if true!=pred]
+    Xu_s = scaler.transform(Xu)
+    yu_pred = knn.predict(Xu_s)
+
+    # Compute accuracy only on images where label can be inferred
+    labeled_mask = np.array([lbl in (0, 1) for lbl in yu])
+    labeled_total = int(labeled_mask.sum())
+    if labeled_total > 0:
+        unseen_acc = accuracy_score(np.array(yu)[labeled_mask], yu_pred[labeled_mask])
+        print(f"Unseen labeled accuracy: {unseen_acc*100:.2f}% ({labeled_total}/{len(yu)} images labeled)")
+    else:
+        print("No labeled unseen images (filenames without 'cat'/'dog'); accuracy not computed.")
+
+    # Print predictions for all unseen images
+    label_map = {0: "cat", 1: "dog", -1: "unknown"}
+    print("Predictions on unseen:")
+    for p, t, pr in zip(pu, yu, yu_pred):
+        print(f"- {p} -> pred={label_map.get(int(pr), str(pr))} true={label_map.get(int(t), 'unknown')}")
+
+    # Visualize ONLY failed unseen cases (known true label and incorrect prediction)
+    failures = [(p, t, pr) for p, t, pr in zip(pu, yu, yu_pred) if t in (0, 1) and int(pr) != int(t)]
     if failures:
         n = len(failures)
-        fig, axes = plt.subplots(n, 2, figsize=(6,3*n), squeeze=False)
-        fig.suptitle("Failed Unseen Cases", fontsize=16)
+        cols = 2
+        rows = (n + cols - 1) // cols
+        fig, axes = plt.subplots(rows, cols, figsize=(8*cols, 4*rows))
+        if rows == 1 and cols == 1:
+            axes = np.array([[axes]])
+        elif rows == 1:
+            axes = np.array([axes])
+        axes_flat = axes.flatten()
+        fig.suptitle("Failed Unseen Cases (True vs Pred)", fontsize=16)
         for i, (p, t, pr) in enumerate(failures):
-            img = Image.open(p)
-            axes[i,0].imshow(img); axes[i,0].axis("off")
-            axes[i,0].set_title(f"True: {['cat','dog'][t]}")
-            axes[i,1].imshow(img); axes[i,1].axis("off")
-            axes[i,1].set_title(f"Pred: {['cat','dog'][pr]}")
-        plt.tight_layout()
+            ax = axes_flat[i]
+            try:
+                img = Image.open(p).convert("RGB")
+            except Exception:
+                ax.axis("off"); ax.set_title(f"Failed to load: {Path(p).name}")
+                continue
+            ax.imshow(img); ax.axis("off")
+            t_str = label_map[int(t)]
+            pr_str = label_map[int(pr)] if int(pr) in (0,1) else str(pr)
+            ax.set_title(f"True: {t_str} | Pred: {pr_str}", color="red")
+        # Hide any unused subplots
+        for j in range(n, rows*cols):
+            axes_flat[j].axis("off")
+        plt.tight_layout(rect=(0,0,1,0.96))
+        out_file = "unseen_failures.png"
+        plt.savefig(out_file)
+        print(f"Saved {out_file}")
         plt.show()
     else:
-        print("No failures on unseen images.")
+        print("No failed cases among labeled unseen images.")
+
 
 if __name__ == "__main__":
     main()
