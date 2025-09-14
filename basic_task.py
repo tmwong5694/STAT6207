@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Cat Image Similarity Analysis using PyTorch and ResNet
-Processes exactly the first 100 images.
+Processes exactly the first 100 images from Cat100.
 
-1. Loads the first 100 cat images from "./data"
+1. Loads the first 100 cat images from Cat100
 2. Uses a pre-trained ResNet-50 model to extract features
 3. Computes cosine similarity between all images
 4. Identifies and visualizes the top 5 most similar and dissimilar pairs
@@ -18,7 +18,7 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import matplotlib.pyplot as plt
 from pathlib import Path
-import sys
+
 
 def setup_device():
     if torch.backends.mps.is_available():
@@ -32,12 +32,14 @@ def setup_device():
         print("Using CPU device")
     return device
 
+
 def load_feature_extractor(device):
     resnet = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
     extractor = nn.Sequential(*list(resnet.children())[:-1])
     extractor.eval().to(device)
     print("Loaded ResNet-50 feature extractor")
     return extractor
+
 
 def get_transform():
     return transforms.Compose([
@@ -48,6 +50,7 @@ def get_transform():
                              std=[0.229, 0.224, 0.225]),
     ])
 
+
 def load_images(data_dir, max_images=100):
     data_path = Path(data_dir)
     if not data_path.exists():
@@ -56,7 +59,7 @@ def load_images(data_dir, max_images=100):
     files = sorted([f for f in data_path.iterdir() if f.suffix.lower() in exts])[:max_images]
     if not files:
         raise ValueError(f"No images found in '{data_dir}'")
-    print(f"Processing first {len(files)} images")
+    print(f"Processing first {len(files)} images from {data_dir}")
     transform = get_transform()
     tensors, paths = [], []
     for i, f in enumerate(files):
@@ -68,8 +71,11 @@ def load_images(data_dir, max_images=100):
                 print(f"Loaded {i+1}/{len(files)} images")
         except Exception as e:
             print(f"Warning: failed to load {f.name}: {e}")
+    if len(tensors) < 2:
+        raise ValueError("Fewer than 2 valid images loaded; cannot compute pairwise similarity.")
     batch = torch.stack(tensors)
     return batch, paths
+
 
 def extract_features(model, batch, device, bs=16):
     n = batch.size(0)
@@ -85,11 +91,13 @@ def extract_features(model, batch, device, bs=16):
     print(f"Features shape: {feats.shape}")
     return feats
 
+
 def compute_sim_matrix(feats):
     print("Computing cosine similarity matrix...")
     sim = cosine_similarity(feats)
     print(f"Matrix shape: {sim.shape}")
     return sim
+
 
 def find_top_pairs(sim, paths, k=5):
     n = sim.shape[0]
@@ -106,6 +114,7 @@ def find_top_pairs(sim, paths, k=5):
         dis_pairs.append((i, j, vals[idx], paths[i], paths[j]))
     return sim_pairs, dis_pairs
 
+
 def visualize(pairs, title, out_file):
     n = len(pairs)
     fig, ax = plt.subplots(n, 2, figsize=(12, 4*n))
@@ -114,27 +123,32 @@ def visualize(pairs, title, out_file):
         img1 = Image.open(pa)
         img2 = Image.open(pb)
         ax[i,0].imshow(img1); ax[i,0].axis("off")
+        ax[i,0].set_title(f"Idx {a+1}: {Path(pa).name}")
         ax[i,1].imshow(img2); ax[i,1].axis("off")
+        ax[i,1].set_title(f"Idx {b+1}: {Path(pb).name}")
         fig.text(0.5, 0.95 - i*0.9/n, f"Score: {score:.4f}", ha="center")
-    plt.tight_layout(rect=[0,0,1,0.96])
+    plt.tight_layout(rect=(0,0,1,0.96))
     plt.savefig(out_file)
     print(f"Saved {out_file}")
     plt.show()
 
-def print_summary(sim_pairs, dis_pairs, total):
+
+def print_summary(sim_pairs, dis_pairs, total, paths):
     print("\n" + "="*50)
     print(f"Results for first {total} images")
     print("="*50)
     print("\nTop similar pairs:")
     for i,(a,b,s,pa,pb) in enumerate(sim_pairs,1):
-        print(f"{i}. Image#{a+1} vs Image#{b+1}, Score={s:.4f}")
+        print(f"{i}. Image#{a+1} ({Path(pa).name}) vs Image#{b+1} ({Path(pb).name}), Score={s:.4f}")
     print("\nTop dissimilar pairs:")
     for i,(a,b,s,pa,pb) in enumerate(dis_pairs,1):
-        print(f"{i}. Image#{a+1} vs Image#{b+1}, Score={s:.4f}")
+        print(f"{i}. Image#{a+1} ({Path(pa).name}) vs Image#{b+1} ({Path(pb).name}), Score={s:.4f}")
+    if total >= 37:
+        print(f"\nImage#37 path: {paths[36]}")
+
 
 def main():
-
-    DATA_DIR = "./data/dog-and-cat-classification-dataset/versions/1/PetImages/Cat"
+    DATA_DIR = "./data/dog-and-cat-classification-dataset/versions/1/PetImages/Cat100"
     MAX = 100; TOP_K = 5
     dev = setup_device()
     model = load_feature_extractor(dev)
@@ -142,10 +156,12 @@ def main():
     feats = extract_features(model, batch, dev)
     sim = compute_sim_matrix(feats)
     sim_p, dis_p = find_top_pairs(sim, paths, TOP_K)
-    print_summary(sim_p, dis_p, len(paths))
-    visualize(sim_p, "Top Similar", "most_similar_100.png")
-    visualize(dis_p, "Top Dissimilar", "most_dissimilar_100.png")
+    print_summary(sim_p, dis_p, len(paths), paths)
+    visualize(sim_p, "Top Similar (Cat100)", "most_similar_100.png")
+    visualize(dis_p, "Top Dissimilar (Cat100)", "most_dissimilar_100.png")
     print("\nDone.")
+
 
 if __name__ == "__main__":
     main()
+
