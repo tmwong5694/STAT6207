@@ -18,7 +18,52 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import matplotlib.pyplot as plt
 from pathlib import Path
+import shutil
+import kagglehub
 
+# ---------------- Dataset prep helpers ----------------
+
+def download_dataset_to_repo_data(repo_root: Path) -> Path:
+    """Download the Kaggle dataset and copy it into repo ./data structure.
+
+    Returns the path to the version folder under ./data/dog-and-cat-classification-dataset/versions/<N>.
+    """
+    src_path = kagglehub.dataset_download("bhavikjikadara/dog-and-cat-classification-dataset")
+    src = Path(src_path).resolve()
+    dest = repo_root / "data" / "dog-and-cat-classification-dataset" / "versions" / src.name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    # Copy entire version directory
+    shutil.copytree(src, dest, dirs_exist_ok=True)
+    print(f"Dataset available at: {dest}")
+    return dest
+
+
+def create_catdog100_subset(version_dir: Path) -> None:
+    """Create Cat100 and Dog100 subsets with files 0.jpg..99.jpg if present."""
+    pet = version_dir / "PetImages"
+    cat_src = pet / "Cat"
+    dog_src = pet / "Dog"
+    cat_dst = pet / "Cat100"
+    dog_dst = pet / "Dog100"
+    cat_dst.mkdir(parents=True, exist_ok=True)
+    dog_dst.mkdir(parents=True, exist_ok=True)
+
+    def copy_range(src: Path, dst: Path):
+        copied = 0
+        for i in range(100):
+            f = src / f"{i}.jpg"
+            if f.exists():
+                try:
+                    shutil.copy2(f, dst / f.name)
+                    copied += 1
+                except Exception as e:
+                    print(f"Warning: failed to copy {f}: {e}")
+        print(f"Prepared {copied} images in {dst}")
+
+    copy_range(cat_src, cat_dst)
+    copy_range(dog_src, dog_dst)
+
+# ---------------- Existing analysis pipeline ----------------
 
 def setup_device():
     if torch.backends.mps.is_available():
@@ -148,7 +193,22 @@ def print_summary(sim_pairs, dis_pairs, total, paths):
 
 
 def main():
-    DATA_DIR = "./data/dog-and-cat-classification-dataset/versions/1/PetImages/Cat100"
+    repo_root = Path(__file__).resolve().parent
+    # Ensure dataset present under ./data and subsets ready
+    version_dir = None
+    try:
+        version_dir = download_dataset_to_repo_data(repo_root)
+        create_catdog100_subset(version_dir)
+    except Exception as e:
+        print(f"Dataset prep warning: {e}")
+
+    # Prefer the dynamically detected version_dir if available
+    if version_dir is not None:
+        data_dir = version_dir / "PetImages" / "Cat100"
+        DATA_DIR = str(data_dir)
+    else:
+        DATA_DIR = "./data/dog-and-cat-classification-dataset/versions/1/PetImages/Cat100"
+
     MAX = 100; TOP_K = 5
     dev = setup_device()
     model = load_feature_extractor(dev)
@@ -164,4 +224,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
