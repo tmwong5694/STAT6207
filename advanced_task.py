@@ -5,7 +5,7 @@ Cats vs Dogs Classification with KNN features
 - Loads up to N images from Cat100 and Dog100
 - Extracts simple numeric features per image
 - Splits into train/test and trains a KNN classifier
-- Evaluates on test split and on the 10 images in ./data/unseen
+- Evaluates on test split and on 10 unseen images under ./unseen (cat_unseen/ and dog_unseen/)
 
 Run:
   python advanced_task.py
@@ -23,6 +23,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
+from download import download_dataset
 
 # ----------------- Helpers -----------------
 
@@ -120,16 +121,23 @@ def infer_label_from_path(path: str) -> int:
 
 
 def load_unseen(unseen_dir: Path, k: int = 10, img_size=(224, 224)) -> Tuple[np.ndarray, List[int], List[str]]:
-    """Load unseen images from ./data/unseen.
+    """Load unseen images from ./unseen.
 
-    Supports two layouts:
-      1) Two subfolders: Cat_unseen/ and Dog_unseen/ (preferred)
-      2) Flat folder with mixed images
+    Prefers two subfolders: cat_unseen/ and dog_unseen/ (lowercase). Also supports
+    legacy names Cat_unseen/ and Dog_unseen/ if present. Falls back to a flat folder.
 
     Returns features, labels (0=cat,1=dog,-1 unknown), and paths.
     """
-    cat_sub = unseen_dir / "Cat_unseen"
-    dog_sub = unseen_dir / "Dog_unseen"
+    # Preferred lowercase layout
+    cat_sub = unseen_dir / "cat_unseen"
+    dog_sub = unseen_dir / "dog_unseen"
+
+    # Legacy fallback (TitleCase)
+    if not (cat_sub.exists() and dog_sub.exists()):
+        legacy_cat = unseen_dir / "Cat_unseen"
+        legacy_dog = unseen_dir / "Dog_unseen"
+        if legacy_cat.exists() and legacy_dog.exists():
+            cat_sub, dog_sub = legacy_cat, legacy_dog
 
     X, y, paths = [], [], []
 
@@ -140,7 +148,6 @@ def load_unseen(unseen_dir: Path, k: int = 10, img_size=(224, 224)) -> Tuple[np.
         files_with_labels: List[Tuple[Path, int]] = [(p, 0) for p in cat_files] + [(p, 1) for p in dog_files]
         if not files_with_labels:
             raise ValueError(f"No images found under {cat_sub} and {dog_sub}")
-        # Keep deterministic order: cats then dogs as selected
         for f, lbl in files_with_labels:
             try:
                 img = Image.open(f).convert("RGB").resize(img_size)
@@ -177,12 +184,25 @@ def load_unseen(unseen_dir: Path, k: int = 10, img_size=(224, 224)) -> Tuple[np.
 def main():
     parser = argparse.ArgumentParser()
     repo_root = Path(__file__).resolve().parent
-    data_root = repo_root / "data" / "dog-and-cat-classification-dataset" / "versions" / "1" / "PetImages"
+
+    # Ensure dataset available locally and derive defaults
+    version_dir = None
+    try:
+        version_dir = download_dataset(repo_root)
+    except Exception as e:
+        print(f"Dataset prep warning: {e}")
+
+    if version_dir is not None:
+        data_root = version_dir / "PetImages"
+    else:
+        data_root = repo_root / "data" / "dog-and-cat-classification-dataset" / "versions" / "1" / "PetImages"
+
     default_cat = data_root / "Cat100"
     default_dog = data_root / "Dog100"
+
     parser.add_argument("--cat-dir", type=str, default=str(default_cat))
     parser.add_argument("--dog-dir", type=str, default=str(default_dog))
-    parser.add_argument("--unseen-dir", type=str, default=str(repo_root / "data" / "unseen"))
+    parser.add_argument("--unseen-dir", type=str, default=str(repo_root / "unseen"))
     parser.add_argument("--limit-per-class", type=int, default=100)
     parser.add_argument("--img-size", type=int, default=224)
     parser.add_argument("--neighbors", type=int, default=5)
