@@ -162,17 +162,33 @@ def find_top_pairs(sim, paths, k=5):
 
 def visualize(pairs, title, out_file):
     n = len(pairs)
-    fig, ax = plt.subplots(n, 2, figsize=(12, 4*n))
+    fig, ax = plt.subplots(n, 2, figsize=(12, 4*n), constrained_layout=False)
     fig.suptitle(title, fontsize=16)
+
+    # Ensure ax is 2D array for consistent indexing
+    if n == 1:
+        ax = np.array([ax])
+
+    # Plot images and titles without indices; just filenames
     for i, (a, b, score, pa, pb) in enumerate(pairs):
         img1 = Image.open(pa)
         img2 = Image.open(pb)
-        ax[i,0].imshow(img1); ax[i,0].axis("off")
-        ax[i,0].set_title(f"Idx {a+1}: {Path(pa).name}")
-        ax[i,1].imshow(img2); ax[i,1].axis("off")
-        ax[i,1].set_title(f"Idx {b+1}: {Path(pb).name}")
-        fig.text(0.5, 0.95 - i*0.9/n, f"Score: {score:.4f}", ha="center")
-    plt.tight_layout(rect=(0,0,1,0.96))
+        ax[i, 0].imshow(img1); ax[i, 0].axis("off")
+        ax[i, 0].set_title(Path(pa).name)
+        ax[i, 1].imshow(img2); ax[i, 1].axis("off")
+        ax[i, 1].set_title(Path(pb).name)
+
+    # Leave room on the left for per-row score labels
+    plt.subplots_adjust(left=0.22, top=0.90, bottom=0.06, wspace=0.05, hspace=0.25)
+
+    # Draw the canvas to compute positions, then place scores to the left of each row
+    fig.canvas.draw()
+    for i, (_, _, score, _, _) in enumerate(pairs):
+        # Get the vertical center of the left image axis in figure coordinates
+        bbox = ax[i, 0].get_position()
+        y_center = bbox.y0 + bbox.height / 2
+        fig.text(0.04, y_center, f"Score: {score:.4f}", ha="left", va="center", fontsize=11)
+
     plt.savefig(out_file)
     print(f"Saved {out_file}")
     plt.show()
