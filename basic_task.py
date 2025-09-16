@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 Cat Image Similarity Analysis using PyTorch and ResNet
-Processes exactly the first 100 images from Cat100.
+Processes all images from PetImages/Cat.
 
-1. Loads the first 100 cat images from Cat100
+1. Loads all cat images from PetImages/Cat
 2. Uses a pre-trained ResNet-50 model to extract features
 3. Computes cosine similarity between all images
 4. Identifies and visualizes the top 5 most similar and dissimilar pairs
@@ -18,50 +18,7 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import matplotlib.pyplot as plt
 from pathlib import Path
-import shutil
-import kagglehub
-
-# ---------------- Dataset prep helpers ----------------
-
-def download_dataset_to_repo_data(repo_root: Path) -> Path:
-    """Download the Kaggle dataset and copy it into repo ./data structure.
-
-    Returns the path to the version folder under ./data/dog-and-cat-classification-dataset/versions/<N>.
-    """
-    src_path = kagglehub.dataset_download("bhavikjikadara/dog-and-cat-classification-dataset")
-    src = Path(src_path).resolve()
-    dest = repo_root / "data" / "dog-and-cat-classification-dataset" / "versions" / src.name
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    # Copy entire version directory
-    shutil.copytree(src, dest, dirs_exist_ok=True)
-    print(f"Dataset available at: {dest}")
-    return dest
-
-
-def create_catdog100_subset(version_dir: Path) -> None:
-    """Create Cat100 and Dog100 subsets with files 0.jpg..99.jpg if present."""
-    pet = version_dir / "PetImages"
-    cat_src = pet / "Cat"
-    dog_src = pet / "Dog"
-    cat_dst = pet / "Cat100"
-    dog_dst = pet / "Dog100"
-    cat_dst.mkdir(parents=True, exist_ok=True)
-    dog_dst.mkdir(parents=True, exist_ok=True)
-
-    def copy_range(src: Path, dst: Path):
-        copied = 0
-        for i in range(100):
-            f = src / f"{i}.jpg"
-            if f.exists():
-                try:
-                    shutil.copy2(f, dst / f.name)
-                    copied += 1
-                except Exception as e:
-                    print(f"Warning: failed to copy {f}: {e}")
-        print(f"Prepared {copied} images in {dst}")
-
-    copy_range(cat_src, cat_dst)
-    copy_range(dog_src, dog_dst)
+from download import download_dataset
 
 # ---------------- Existing analysis pipeline ----------------
 
@@ -96,15 +53,17 @@ def get_transform():
     ])
 
 
-def load_images(data_dir, max_images=100):
+def load_images(data_dir, max_images=None):
     data_path = Path(data_dir)
     if not data_path.exists():
         raise FileNotFoundError(f"Data directory '{data_dir}' not found")
     exts = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
-    files = sorted([f for f in data_path.iterdir() if f.suffix.lower() in exts])[:max_images]
+    files = sorted([f for f in data_path.iterdir() if f.suffix.lower() in exts])
+    if max_images is not None:
+        files = files[:max_images]
     if not files:
         raise ValueError(f"No images found in '{data_dir}'")
-    print(f"Processing first {len(files)} images from {data_dir}")
+    print(f"Processing {len(files)} images from {data_dir}")
     transform = get_transform()
     tensors, paths = [], []
     for i, f in enumerate(files):
@@ -112,7 +71,7 @@ def load_images(data_dir, max_images=100):
             img = Image.open(f).convert("RGB")
             tensors.append(transform(img))
             paths.append(str(f))
-            if (i+1) % 20 == 0:
+            if (i+1) % 200 == 0:
                 print(f"Loaded {i+1}/{len(files)} images")
         except Exception as e:
             print(f"Warning: failed to load {f.name}: {e}")
@@ -122,7 +81,7 @@ def load_images(data_dir, max_images=100):
     return batch, paths
 
 
-def extract_features(model, batch, device, bs=16):
+def extract_features(model, batch, device, bs=32):
     n = batch.size(0)
     print(f"Extracting features for {n} images...")
     feats = []
@@ -131,14 +90,15 @@ def extract_features(model, batch, device, bs=16):
             b = batch[i:i+bs].to(device)
             out = model(b).view(b.size(0), -1).cpu().numpy()
             feats.append(out)
-            print(f"Processed {min(i+bs, n)}/{n}")
+            if (i + bs) % (bs * 10) == 0 or i + bs >= n:
+                print(f"Processed {min(i+bs, n)}/{n}")
     feats = np.vstack(feats)
     print(f"Features shape: {feats.shape}")
     return feats
 
 
 def compute_sim_matrix(feats):
-    print("Computing cosine similarity matrix...")
+    print("Computing cosine similarity matrix (may be memory intensive for very large datasets)...")
     sim = cosine_similarity(feats)
     print(f"Matrix shape: {sim.shape}")
     return sim
@@ -162,33 +122,32 @@ def find_top_pairs(sim, paths, k=5):
 
 def visualize(pairs, title, out_file):
     n = len(pairs)
-    fig, ax = plt.subplots(n, 2, figsize=(12, 4*n), constrained_layout=False)
+    # Create a 3-column layout: [score | image A | image B]
+    fig, ax = plt.subplots(n, 3, figsize=(14, 3.8 * n), gridspec_kw={"width_ratios": [1, 4, 4]})
     fig.suptitle(title, fontsize=16)
 
-    # Ensure ax is 2D array for consistent indexing
+    # Normalize axis indexing for n == 1
     if n == 1:
         ax = np.array([ax])
 
-    # Plot images and titles without indices; just filenames
     for i, (a, b, score, pa, pb) in enumerate(pairs):
+        # Left column: similarity score (avoid overlap with images)
+        score_ax = ax[i, 0]
+        score_ax.axis("off")
+        score_ax.text(0.05, 0.5, f"{score:.4f}", fontsize=12, va="center", ha="left")
+
+        # Middle and right columns: images with only file names (no indices)
         img1 = Image.open(pa)
         img2 = Image.open(pb)
-        ax[i, 0].imshow(img1); ax[i, 0].axis("off")
-        ax[i, 0].set_title(Path(pa).name)
-        ax[i, 1].imshow(img2); ax[i, 1].axis("off")
-        ax[i, 1].set_title(Path(pb).name)
+        ax[i, 1].imshow(img1)
+        ax[i, 1].axis("off")
+        ax[i, 1].set_title(Path(pa).name)
 
-    # Leave room on the left for per-row score labels
-    plt.subplots_adjust(left=0.22, top=0.90, bottom=0.06, wspace=0.05, hspace=0.25)
+        ax[i, 2].imshow(img2)
+        ax[i, 2].axis("off")
+        ax[i, 2].set_title(Path(pb).name)
 
-    # Draw the canvas to compute positions, then place scores to the left of each row
-    fig.canvas.draw()
-    for i, (_, _, score, _, _) in enumerate(pairs):
-        # Get the vertical center of the left image axis in figure coordinates
-        bbox = ax[i, 0].get_position()
-        y_center = bbox.y0 + bbox.height / 2
-        fig.text(0.04, y_center, f"Score: {score:.4f}", ha="left", va="center", fontsize=11)
-
+    plt.tight_layout(rect=(0, 0, 1, 0.96))
     plt.savefig(out_file)
     print(f"Saved {out_file}")
     plt.show()
@@ -196,7 +155,7 @@ def visualize(pairs, title, out_file):
 
 def print_summary(sim_pairs, dis_pairs, total, paths):
     print("\n" + "="*50)
-    print(f"Results for first {total} images")
+    print(f"Results for {total} images")
     print("="*50)
     print("\nTop similar pairs:")
     for i,(a,b,s,pa,pb) in enumerate(sim_pairs,1):
@@ -210,22 +169,22 @@ def print_summary(sim_pairs, dis_pairs, total, paths):
 
 def main():
     repo_root = Path(__file__).resolve().parent
-    # Ensure dataset present under ./data and subsets ready
     version_dir = None
     try:
-        version_dir = download_dataset_to_repo_data(repo_root)
-        create_catdog100_subset(version_dir)
+        version_dir = download_dataset(repo_root)
     except Exception as e:
         print(f"Dataset prep warning: {e}")
 
-    # Prefer the dynamically detected version_dir if available
     if version_dir is not None:
-        data_dir = version_dir / "PetImages" / "Cat100"
+        data_dir = version_dir \
+            / "PetImages" \
+            / "Cat100"
         DATA_DIR = str(data_dir)
     else:
         DATA_DIR = "./data/dog-and-cat-classification-dataset/versions/1/PetImages/Cat100"
 
-    MAX = 100; TOP_K = 5
+    MAX = None  # use full dataset
+    TOP_K = 5
     dev = setup_device()
     model = load_feature_extractor(dev)
     batch, paths = load_images(DATA_DIR, MAX)
@@ -233,8 +192,8 @@ def main():
     sim = compute_sim_matrix(feats)
     sim_p, dis_p = find_top_pairs(sim, paths, TOP_K)
     print_summary(sim_p, dis_p, len(paths), paths)
-    visualize(sim_p, "Top Similar (Cat100)", "most_similar_100.png")
-    visualize(dis_p, "Top Dissimilar (Cat100)", "most_dissimilar_100.png")
+    visualize(sim_p, "Top Similar (Cats)", "most_similar.png")
+    visualize(dis_p, "Top Dissimilar (Cats)", "most_dissimilar.png")
     print("\nDone.")
 
 
