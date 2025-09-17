@@ -134,7 +134,7 @@ def visualize(pairs, title, out_file):
         # Left column: similarity score (avoid overlap with images)
         score_ax = ax[i, 0]
         score_ax.axis("off")
-        score_ax.text(0.05, 0.5, f"{score:.4f}", fontsize=12, va="center", ha="left")
+        score_ax.text(0.05, 0.5, f"cos similarity: {score:.4f}", fontsize=12, va="center", ha="left")
 
         # Middle and right columns: images with only file names (no indices)
         img1 = Image.open(pa)
@@ -170,6 +170,7 @@ def print_summary(sim_pairs, dis_pairs, total, paths):
 def main():
     repo_root = Path(__file__).resolve().parent
     version_dir = None
+    # TODO: It will take some time to download the dataset the first time from kaggle
     try:
         version_dir = download_dataset(repo_root)
     except Exception as e:
