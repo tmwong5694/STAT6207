@@ -128,16 +128,8 @@ def load_unseen(unseen_dir: Path, k: int = 10, img_size=(224, 224)) -> Tuple[np.
 
     Returns features, labels (0=cat,1=dog,-1 unknown), and paths.
     """
-    # Preferred lowercase layout
     cat_sub = unseen_dir / "cat_unseen"
     dog_sub = unseen_dir / "dog_unseen"
-
-    # Legacy fallback (TitleCase)
-    if not (cat_sub.exists() and dog_sub.exists()):
-        legacy_cat = unseen_dir / "Cat_unseen"
-        legacy_dog = unseen_dir / "Dog_unseen"
-        if legacy_cat.exists() and legacy_dog.exists():
-            cat_sub, dog_sub = legacy_cat, legacy_dog
 
     X, y, paths = [], [], []
 
@@ -182,6 +174,8 @@ def load_unseen(unseen_dir: Path, k: int = 10, img_size=(224, 224)) -> Tuple[np.
 
 
 def main():
+
+    # TODO: It will take some time to download the dataset the first time from kaggle
     parser = argparse.ArgumentParser()
     repo_root = Path(__file__).resolve().parent
 
