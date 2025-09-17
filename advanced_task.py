@@ -163,7 +163,7 @@ def load_unseen(unseen_dir: Path, k: int = 10, img_size=(224, 224)) -> Tuple[np.
             img = Image.open(f).convert("RGB").resize(img_size)
             arr = np.asarray(img, dtype=np.float32) / 255.0
             X.append(extract_features(arr))
-            y.append(infer_label_from_path(f))
+            y.append(infer_label_from_path(str(f)))
             paths.append(str(f))
         except Exception as e:
             print(f"Warning: failed to load unseen {f}: {e}")
@@ -258,10 +258,10 @@ def main():
     for p, t, pr in zip(pu, yu, yu_pred):
         print(f"- {p} -> pred={label_map.get(int(pr), str(pr))} true={label_map.get(int(t), 'unknown')}")
 
-    # Visualize ONLY failed unseen cases (known true label and incorrect prediction)
-    failures = [(p, t, pr) for p, t, pr in zip(pu, yu, yu_pred) if t in (0, 1) and int(pr) != int(t)]
-    if failures:
-        n = len(failures)
+    # Visualize ALL unseen cases (correct=green, incorrect=red, unknown=gray)
+    entries = list(zip(pu, yu, yu_pred))
+    n = len(entries)
+    if n > 0:
         cols = 2
         rows = (n + cols - 1) // cols
         fig, axes = plt.subplots(rows, cols, figsize=(8*cols, 4*rows))
@@ -270,8 +270,8 @@ def main():
         elif rows == 1:
             axes = np.array([axes])
         axes_flat = axes.flatten()
-        fig.suptitle("Failed Unseen Cases (True vs Pred)", fontsize=16)
-        for i, (p, t, pr) in enumerate(failures):
+        fig.suptitle("Unseen Results (True vs Pred)", fontsize=16)
+        for i, (p, t, pr) in enumerate(entries):
             ax = axes_flat[i]
             try:
                 img = Image.open(p).convert("RGB")
@@ -279,19 +279,53 @@ def main():
                 ax.axis("off"); ax.set_title(f"Failed to load: {Path(p).name}")
                 continue
             ax.imshow(img); ax.axis("off")
-            t_str = label_map[int(t)]
+            t_known = t in (0, 1)
+            is_correct = (int(pr) == int(t)) if t_known else False
+            color = "green" if is_correct else ("red" if t_known else "gray")
+            t_str = label_map[int(t)] if t_known else "unknown"
             pr_str = label_map[int(pr)] if int(pr) in (0,1) else str(pr)
-            ax.set_title(f"True: {t_str} | Pred: {pr_str}", color="red")
+            ax.set_title(f"True: {t_str} | Pred: {pr_str}", color=color)
         # Hide any unused subplots
         for j in range(n, rows*cols):
             axes_flat[j].axis("off")
         plt.tight_layout(rect=(0,0,1,0.96))
-        out_file = "unseen_failures.png"
-        plt.savefig(out_file)
-        print(f"Saved {out_file}")
+        out_file_all = "unseen_results.png"
+        plt.savefig(out_file_all)
+        print(f"Saved {out_file_all}")
         plt.show()
-    else:
-        print("No failed cases among labeled unseen images.")
+
+    # Per-animal pie charts (cats and dogs) for labeled images
+    for cls, name in [(0, "cat"), (1, "dog")]:
+        cls_mask = np.array([t == cls for t in yu])
+        total_cls = int(cls_mask.sum())
+        if total_cls == 0:
+            print(f"No {name} images in unseen set; skipping {name} pie chart.")
+            continue
+        pr_cls = yu_pred[cls_mask]
+        t_cls = np.array(yu)[cls_mask]
+        correct_cls = int(np.sum(pr_cls == t_cls))
+        incorrect_cls = total_cls - correct_cls
+        fig, ax = plt.subplots(figsize=(5,5))
+        ax.pie([correct_cls, incorrect_cls], labels=["Correct", "Incorrect"],
+               colors=["#2ca02c", "#d62728"], autopct=lambda pct: f"{pct:.1f}%")
+        ax.set_title(f"Unseen {name.capitalize()} Accuracy ({correct_cls}/{total_cls})")
+        out_file_pie = f"unseen_pie_{name}.png"
+        plt.savefig(out_file_pie)
+        print(f"Saved {out_file_pie}")
+        plt.show()
+
+    # Combined pie chart across both groups (labeled images only)
+    if labeled_total > 0:
+        correct_overall = int(np.sum(yu_pred[labeled_mask] == np.array(yu)[labeled_mask]))
+        incorrect_overall = labeled_total - correct_overall
+        fig, ax = plt.subplots(figsize=(5,5))
+        ax.pie([correct_overall, incorrect_overall], labels=["Correct", "Incorrect"],
+               colors=["#2ca02c", "#d62728"], autopct=lambda pct: f"{pct:.1f}%")
+        ax.set_title(f"Unseen Overall Accuracy ({correct_overall}/{labeled_total})")
+        out_file_overall = "unseen_pie_overall.png"
+        plt.savefig(out_file_overall)
+        print(f"Saved {out_file_overall}")
+        plt.show()
 
 
 if __name__ == "__main__":
